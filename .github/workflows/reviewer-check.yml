@@ -1,0 +1,40 @@
+name: Reviewer Account Age Check
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  check-reviewer-age:
+    runs-on: ubuntu-latest
+    if: github.event.review.state == 'approved'
+    steps:
+      - name: Check reviewer account age
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const reviewer = context.payload.review.user.login;
+
+            const user = await github.rest.users.getByUsername({ username: reviewer });
+            const createdAt = new Date(user.data.created_at);
+            const now = new Date();
+            const ageInDays = (now - createdAt) / (1000 * 60 * 60 * 24);
+
+            console.log(`Reviewer ${reviewer} account age: ${Math.floor(ageInDays)} days`);
+
+            if (ageInDays < 30) {
+              const { owner, repo } = context.repo;
+              const pull_number = context.payload.pull_request.number;
+
+              await github.rest.pulls.dismissReview({
+                owner, repo, pull_number,
+                review_id: context.payload.review.id,
+                message: `Review dismissed: @${reviewer}'s account is ${Math.floor(ageInDays)} days old (minimum 30 days required).`
+              });
+
+              console.log(`Dismissed review from ${reviewer} — account too new.`);
+            }

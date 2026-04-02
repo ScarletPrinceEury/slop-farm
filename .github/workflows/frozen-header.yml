@@ -1,0 +1,78 @@
+name: Frozen Header Check
+
+on:
+  pull_request:
+    paths:
+      - 'README.md'
+      - 'HUMANS.md'
+      - 'assets/**'
+
+jobs:
+  check-frozen-header:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout base branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr
+
+      - name: Check frozen README header
+        run: |
+          MARKER="<!-- COMMUNITY CONTENT BELOW"
+
+          # Extract everything above the marker from both versions
+          if grep -q "$MARKER" base/README.md && grep -q "$MARKER" pr/README.md; then
+            BASE_HEADER=$(sed "/$MARKER/q" base/README.md)
+            PR_HEADER=$(sed "/$MARKER/q" pr/README.md)
+
+            if [ "$BASE_HEADER" != "$PR_HEADER" ]; then
+              echo "::error::The frozen header of README.md (everything above the COMMUNITY CONTENT marker) cannot be modified."
+              exit 1
+            fi
+          elif grep -q "$MARKER" base/README.md && ! grep -q "$MARKER" pr/README.md; then
+            echo "::error::The COMMUNITY CONTENT marker was removed from README.md. This is not allowed."
+            exit 1
+          fi
+
+          echo "Frozen header is intact."
+
+      - name: Check assets directory
+        run: |
+          if [ -d base/assets ] && [ -d pr/assets ]; then
+            BASE_HASH=$(find base/assets -type f -exec sha256sum {} \; | sort | sha256sum)
+            PR_HASH=$(find pr/assets -type f -exec sha256sum {} \; | sort | sha256sum)
+
+            if [ "$BASE_HASH" != "$PR_HASH" ]; then
+              echo "::error::The assets/ directory is protected and cannot be modified."
+              exit 1
+            fi
+          elif [ -d base/assets ] && [ ! -d pr/assets ]; then
+            echo "::error::The assets/ directory cannot be deleted."
+            exit 1
+          fi
+
+          echo "Assets directory is intact."
+
+      - name: Check HUMANS.md
+        run: |
+          if [ -f base/HUMANS.md ] && [ -f pr/HUMANS.md ]; then
+            BASE_HASH=$(sha256sum base/HUMANS.md | cut -d' ' -f1)
+            PR_HASH=$(sha256sum pr/HUMANS.md | cut -d' ' -f1)
+
+            if [ "$BASE_HASH" != "$PR_HASH" ]; then
+              echo "::error::HUMANS.md is protected and cannot be modified."
+              exit 1
+            fi
+          elif [ -f base/HUMANS.md ] && [ ! -f pr/HUMANS.md ]; then
+            echo "::error::HUMANS.md cannot be deleted."
+            exit 1
+          fi
+
+          echo "HUMANS.md is intact."

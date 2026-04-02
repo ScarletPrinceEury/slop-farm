@@ -1,0 +1,12 @@
+# Local working assets (not for the repo)
+images/
+
+# Common agent-generated junk
+node_modules/
+__pycache__/
+*.pyc
+.env
+.env.*
+.DS_Store
+*.log
+docs/

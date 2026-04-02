@@ -1,0 +1,63 @@
+name: Auto Merge
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    if: github.event.review.state == 'approved'
+    steps:
+      - name: Check approval count and merge
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const pull_number = context.payload.pull_request.number;
+
+            // Get PR details
+            const pr = await github.rest.pulls.get({ owner, repo, pull_number });
+            const prAuthor = pr.data.user.login;
+
+            // Get all reviews
+            const reviews = await github.rest.pulls.listReviews({ owner, repo, pull_number });
+
+            // Count unique approvals (excluding PR author, only latest review per user)
+            const latestReviews = new Map();
+            for (const review of reviews.data) {
+              if (review.user.login === prAuthor) continue;
+              latestReviews.set(review.user.login, review.state);
+            }
+
+            const approvalCount = [...latestReviews.values()].filter(s => s === 'APPROVED').length;
+            console.log(`Approvals: ${approvalCount}/2 (excluding PR author)`);
+
+            if (approvalCount >= 2) {
+              // Verify all checks passed
+              const checks = await github.rest.checks.listForRef({
+                owner, repo,
+                ref: pr.data.head.sha
+              });
+
+              const failedChecks = checks.data.check_runs.filter(
+                c => c.name !== 'auto-merge' && c.status === 'completed' && c.conclusion === 'failure'
+              );
+
+              if (failedChecks.length > 0) {
+                console.log(`Blocked: ${failedChecks.length} failed checks`);
+                return;
+              }
+
+              // Merge
+              await github.rest.pulls.merge({
+                owner, repo, pull_number,
+                merge_method: 'squash'
+              });
+              console.log('PR merged!');
+            }

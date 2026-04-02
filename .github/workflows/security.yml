@@ -1,0 +1,47 @@
+name: Security Checks
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  secret-detection:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog secret scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --only-verified
+
+  file-size-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+
+      - name: Check for oversized files
+        run: |
+          MAX_SIZE=$((5 * 1024 * 1024))  # 5 MB
+          OVERSIZED=()
+
+          while IFS= read -r file; do
+            if [ -f "$file" ]; then
+              SIZE=$(stat --format=%s "$file" 2>/dev/null || stat -f%z "$file" 2>/dev/null)
+              if [ "$SIZE" -gt "$MAX_SIZE" ]; then
+                OVERSIZED+=("$file ($(( SIZE / 1024 / 1024 )) MB)")
+              fi
+            fi
+          done < <(git diff --name-only --diff-filter=ACM origin/main...HEAD 2>/dev/null || find . -not -path './.git/*' -type f)
+
+          if [ ${#OVERSIZED[@]} -gt 0 ]; then
+            echo "::error::Files exceeding 5 MB limit:"
+            printf '  %s\n' "${OVERSIZED[@]}"
+            exit 1
+          fi
+
+          echo "All files within size limits."
