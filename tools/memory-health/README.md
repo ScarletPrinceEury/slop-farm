@@ -57,16 +57,17 @@ chmod +x tools/memory-health/memory_health.py
 memory-health [OPTIONS]
 
 Options:
-  --dir PATH          Memory directory to scan (default: ./memory)
-  --index FILE        Index file to check for orphan references
-  --max-age DAYS      Max file age in days before warning (default: 30)
-  --max-size BYTES    Max file size before warning (default: 51200 = 50 KB)
-  --extensions EXT+   File extensions to scan (default: .md)
-  --fix               Apply automatic fixes
-  --dry-run           With --fix: preview actions without applying them
-  --no-color          Plain text output (no ANSI colors)
-  --config FILE       Path to memory-health.json config file
-  --exit-code         Exit with code 1 if any issues are found (for CI use)
+  --dir PATH              Memory directory to scan (default: ./memory)
+  --index FILE            Index file to check for orphan references
+  --max-age DAYS          Max file age in days before warning (default: 30)
+  --max-size BYTES        Max file size before warning (default: 51200 = 50 KB)
+  --extensions EXT+       File extensions to scan (default: .md)
+  --ignore-pattern GLOB+  Glob patterns for files to skip in orphan detection
+  --fix                   Apply automatic fixes
+  --dry-run               With --fix: preview actions without applying them
+  --no-color              Plain text output (no ANSI colors)
+  --config FILE           Path to memory-health.json config file
+  --exit-code             Exit with code 1 if any issues are found (for CI use)
 ```
 
 ### Examples
@@ -122,26 +123,41 @@ that index is flagged. This catches notes that were written but never integrated
 into the agent's active retrieval path.
 
 ```
-[WARN] [orphan] 2026-01-15-sprint-notes.md
+[WARN] [orphan] scratch-notes.md
        Not referenced by index file (MEMORY.md)
        -> Add a link or summary to MEMORY.md, or archive if obsolete
+```
+
+**Ignore patterns** — date-stamped diary files (`YYYY-MM-DD*.md`) are excluded
+from orphan detection by default, since it is normal and expected for daily logs
+not to be indexed. You can override this with `--ignore-pattern` or the
+`ignore_patterns` config key:
+
+```bash
+# Skip date-stamped files and anything in a scratch- prefix
+python3 memory_health.py --ignore-pattern '????-??-??*.md' 'scratch-*.md'
+```
+
+```json
+{ "ignore_patterns": ["[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*.md", "scratch-*.md"] }
 ```
 
 ### Contradictions
 The tool extracts positive claims ("always use X", "prefer Y") and negative
 claims ("never use X", "avoid Y") from each file and cross-references them.
-When the same subject appears in opposing stances across files, a contradiction
-is flagged.
+When the same subject appears in opposing stances across files, a possible
+contradiction is flagged.
 
 ```
-[WARN] [contradiction] tooling.md vs debugging.md
-       Potential conflict on: pytest, bun, typescript
-       -> Compare tooling.md and debugging.md; reconcile conflicting instructions
+[WARN] [possible-contradiction] tooling.md vs debugging.md
+       Possible contradiction on: pytest, bun, typescript (verify — false positives are common)
+       -> Compare tooling.md and debugging.md; reconcile only if genuinely conflicting
 ```
 
 This detection is heuristic — it works best on opinionated notes written in
-direct language. It will miss subtle contradictions and may occasionally surface
-false positives. Treat results as prompts for human review, not verdicts.
+direct language. It will miss subtle contradictions and **frequently surfaces
+false positives**. Treat results as prompts for human review, not verdicts.
+When in doubt, ignore the finding.
 
 ### Stale markers
 `TODO`, `FIXME`, `HACK`, and `XXX` markers that include a past date are flagged.
@@ -160,11 +176,14 @@ When `--fix` is passed, the tool takes the following actions:
 
 | Condition | Action |
 |---|---|
-| Critical-severity staleness or bloat | Move file to `memory/archive/` |
-| Contradictions found | Create `memory/review-needed.md` listing all conflicts |
-| Orphaned files (with a known index) | Append `[ ] Review unindexed file: ...` tasks to the index |
+| Critical-severity staleness or bloat | Move file to `memory/archive/` (recoverable) |
+| Possible contradictions found | Create `memory/review-needed.md`; append a new dated section on re-runs |
+| Orphaned files (with a known index) | Append `[ ] Review unindexed file: ...` tasks to the index (skipped if already present) |
 
-Use `--dry-run` alongside `--fix` to preview all actions without applying them.
+Auto-archiving is based on configurable age/size thresholds and is a
+**suggestion, not a judgment** — review archived files before treating them as
+obsolete. Use `--dry-run` alongside `--fix` to preview all actions without
+applying them.
 
 ```
 [DRY RUN] Fix actions applied:
@@ -172,6 +191,10 @@ Use `--dry-run` alongside `--fix` to preview all actions without applying them.
   [DRY RUN] CREATE   review-needed.md
   [DRY RUN] APPEND   orphan reminders to MEMORY.md
 ```
+
+`--fix` is safe to run repeatedly. It will not duplicate orphan reminders in
+the index, and it appends new sections to `review-needed.md` rather than
+overwriting any manual context you may have added.
 
 ---
 
@@ -188,9 +211,14 @@ memory directory itself. CLI flags override config file values.
   "max_size_bytes": 30720,
   "extensions": [".md"],
   "archive_subdir": "archive",
-  "review_file": "review-needed.md"
+  "review_file": "review-needed.md",
+  "ignore_patterns": ["[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*.md"]
 }
 ```
+
+`ignore_patterns` accepts a list of glob patterns. Files whose names match any
+pattern are excluded from orphan detection (staleness and bloat checks still
+apply). The default pattern skips date-stamped daily log files.
 
 See `memory-health.example.json` for an annotated reference.
 
@@ -224,7 +252,9 @@ falls back to monochrome ASCII output that pipes cleanly to logs and CI.
 
 **Conservative fixes.** `--fix` never deletes files. Archiving moves files to
 a recoverable `memory/archive/` subdirectory. The tool will never silently
-destroy data.
+destroy data. Auto-archiving is a suggestion based on configurable thresholds,
+not a statement that the archived content is worthless. The archive directory
+exists precisely so you can review and restore anything moved there.
 
 **Opinionated defaults.** 30-day staleness and 50 KB size thresholds are
 opinionated but intentional. Agent memory should be lean and current. If your
@@ -238,6 +268,6 @@ MIT. See [LICENSE](../../LICENSE) in the repository root.
 
 ---
 
-*Built for the [slop-farm](https://github.com/anthropics/slop-farm) project —
+*Built for the [slop-farm](https://github.com/fielding/slop-farm) project —
 an AI-governed open source experiment where agents build whatever they think
 makes the world better.*
